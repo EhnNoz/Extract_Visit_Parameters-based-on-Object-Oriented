@@ -1,7 +1,12 @@
 from datetime import datetime, timedelta
 from itertools import chain
+from threading import Thread
 import pandas as pd
 from elasticsearch import Elasticsearch
+from sqlalchemy import create_engine
+
+db_engine = create_engine('postgresql://postgres:nrz1371@localhost/samak', pool_size=20, max_overflow=100)
+db_connected = db_engine.connect()
 
 
 class ExtractData:
@@ -34,16 +39,25 @@ class ExtractData:
             body=body
         )
 
+        sid = data['_scroll_id']
+        summ = 0
         scroll_size = len(data['hits']['hits'])
         read_file = pd.DataFrame()
         while scroll_size > 0:
             process_output = process_hits(data['hits']['hits'])
+
+            data = es.scroll(scroll_id=sid, scroll='2m')
+            sid = data['_scroll_id']
+            scroll_size = len(data['hits']['hits'])
+
             read_file = read_file.append(process_output, ignore_index=True)
             read_file = read_file[
                 ['time_stamp', '@version', 'sys_id', 'time_code', '@timestamp', 'service_id', 'session_id',
                  'content_name', 'channel_name', 'content_type_id', 'action_id']]
             read_file = read_file.astype(str)
-            return read_file
+            summ = scroll_size + summ
+            print(summ)
+        return read_file
 
     @staticmethod
     def extract_epg(data_frame):
@@ -143,49 +157,103 @@ class CompareData:
 
         return sum_pro_dur_lst
 
+    @staticmethod
+    def calc_sessions(session_list, final_list=[], fn_lst=[]):
+        for session in session_list:
+            session_data_output = data_output[data_output['session_id'] == session]
+            call_class = CompareData(session_data_output, cr_epg_lst)
+            try:
+                log_act_filter = call_class.log_thread('09', '1', '1', '1')
+            except IndexError:
+                continue
+            mnr_process_log_output = list(map(lambda x: call_class.process_log(x), log_act_filter))
+            mnr_process_log_output = list(filter(None, mnr_process_log_output))
+            mnr_process_log_output = list(chain.from_iterable(mnr_process_log_output))
+            if mnr_process_log_output:
+                final_list.append(mnr_process_log_output)
+        for item in final_list:
+            result = [e.get('id') for e in item]
+            result = set(result)
+            # print(result)
+            sum_lst = []
+            unique_lst = []
+            for id_num in result:
+                flt_lst_id = list(filter(lambda x: x.get('id') == id_num, item))
+                sum_result = sum(d.get('duration_sum', 0) for d in flt_lst_id)
+                sum_lst.append(sum_result)
+                flt_lst_id[0].update({'duration_sum': sum_result})
+                flt_lst_id[0].update({'visit_sum': 1})
+                unique_lst.append(flt_lst_id[0])
+            # print(sum_lst)
+            fn_lst.append(unique_lst)
 
-call_extract_data = ExtractData('2022-04-11T20:30:00Z', '2022-04-11T23:59:00Z',
-                                "http://norozzadeh:Kibana@110$%^@192.168.143.34:9200", 'live-action', 'time_stamp',
+        # print(session)
+        # print(final_list)
+
+        fn_lst = list(chain.from_iterable(fn_lst))
+        if fn_lst:
+            fn_df = pd.DataFrame(fn_lst)
+            fn_df.to_sql('Re_DurVis', db_connected, if_exists='append', index=False)
+
+        print(fn_lst)
+        return fn_lst
+
+
+call_extract_data = ExtractData('2022-04-18T00:00:01Z', '2022-04-18T23:59:59Z',
+                                "http://norozzadeh:Kibana@110$%^@192.168.143.34:9200", 'live-action', '@timestamp',
                                 '1m', 10000)
-df = pd.read_excel('epg_pro.xlsx', index_col=False)
+df = pd.read_excel('epg_pro1.xlsx', index_col=False)
 cr_epg_lst = ExtractData.extract_epg(df)
 
 data_output = call_extract_data.get_data()
 session_set = set(data_output['session_id'])
-# len_val_lst = len(session_lst)/2
-# session_lst_1 = session_lst[0:len_val_lst]
-# session_lst[len_val_lst:]
+final = CompareData.calc_sessions(session_set, [], [])
+session_lst = list(session_set)
+chunks = [session_lst[s_id:s_id + 50] for s_id in range(0, len(session_lst), 50)]
+for chunk in chunks:
+    t1 = Thread(target=CompareData.calc_sessions, args=[chunk, [], []])
+    t1.start()
 
-final_list = []
-for session in session_set:
-    session_data_output = data_output[data_output['session_id'] == session]
-    call_class = CompareData(session_data_output, cr_epg_lst)
-    try:
-        log_act_filter = call_class.log_thread('09', '1', '1', '1')
-    except IndexError:
-        continue
-    mnr_process_log_output = list(map(lambda x: call_class.process_log(x), log_act_filter))
-    mnr_process_log_output = list(filter(None, mnr_process_log_output))
-    mnr_process_log_output = list(chain.from_iterable(mnr_process_log_output))
-    if mnr_process_log_output:
-        final_list.append(mnr_process_log_output)
-
-f_lst = []
-for item in final_list:
-    result = [e.get('id') for e in item]
-    result = set(result)
-    print(result)
-    sum_lst = []
-    unique_lst = []
-    for id_num in result:
-        flt_lst_id = list(filter(lambda x: x.get('id') == id_num, item))
-        sum_result = sum(d.get('duration_sum', 0) for d in flt_lst_id)
-        sum_lst.append(sum_result)
-        flt_lst_id[0].update({'duration_sum':sum_result})
-        flt_lst_id[0].update({'visit_sum': 1})
-        unique_lst.append(flt_lst_id[0])
-    print(sum_lst)
-    f_lst.append(unique_lst)
-
-
-
+#
+# final_list =[]
+# for session in session_set:
+#     if session =='f670be01-221c-4ebb-8eb2-72ce837e7cb8':
+#         session_data_output = data_output[data_output['session_id'] == session]
+#         call_class = CompareData(session_data_output, cr_epg_lst)
+#         try:
+#             log_act_filter = call_class.log_thread('09', '1', '1', '1')
+#         except IndexError:
+#             continue
+#         mnr_process_log_output = list(map(lambda x: call_class.process_log(x), log_act_filter))
+#         mnr_process_log_output = list(filter(None, mnr_process_log_output))
+#         mnr_process_log_output = list(chain.from_iterable(mnr_process_log_output))
+#         if mnr_process_log_output:
+#             final_list.append(mnr_process_log_output)
+#
+# f_lst = []
+# for init_item in final_list:
+#     item = init_item.copy()
+#     print(len(item))
+#     result = [e.get('id') for e in item]
+#     result = set(result)
+#     print(f'result:{result}')
+#     sum_lst = []
+#     unique_lst = []
+#     for id_num in result:
+#         # print(f'result:{result}')
+#         flt_lst_id = list(filter(lambda x: x.get('id') == id_num, item))
+#         print(f'flt_lst_id:{flt_lst_id}')
+#         sum_result = [d.get('duration_sum') for d in flt_lst_id]
+#         print(sum_result)
+#         x_p = sum(sum_result)
+#         print(x_p)
+#     #     sum_lst.append(sum_result)
+#         flt_lst_id[0].update({'duration_sum':x_p})
+#     #     flt_lst_id[0].update({'visit_sum': 1})
+#         unique_lst.append(flt_lst_id[0])
+#     # print(sum_lst)
+#     f_lst.append(unique_lst)
+#     print(final_list)
+#
+#
+# 95406a90-053d-46f1-b7ed-c202c90599f7  03:47
