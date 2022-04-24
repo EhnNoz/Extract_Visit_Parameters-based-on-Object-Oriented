@@ -12,6 +12,8 @@ from threading import Thread
 import pandas as pd
 import pika
 from elasticsearch import Elasticsearch
+
+
 # from sqlalchemy import create_engine
 
 # db_engine = create_engine('postgresql://postgres:nrz1371@localhost/samak', pool_size=20, max_overflow=100)
@@ -24,6 +26,7 @@ class ExtractData:
      1) extract data of Elastic Search database (get_data)
      2) customize epg field (extract_epg)
     """
+
     def __init__(self, start_time, end_time, hour_dif, minutes_dif, engine_elastic, table_name,
                  field_name, scroll, size):
         start_time = datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ')
@@ -123,11 +126,12 @@ class CompareData:
     3) calc sum duration and visit each session and compliance with EPG
         and send to rabbitmq (calc_sessions)
     """
+
     def __init__(self, log_data_frame, epg_lst):
         self.log_lst = log_data_frame.to_dict(orient='records')
         self.epg_lst = epg_lst
 
-    def log_thread(self, sys_id, service_id, action_id, con_type_id):
+    def log_thread(self, sys_id, service_id, action_id, con_type_id, close_session):
         """
         This def is writen to filter log based on follow:
         :param sys_id:
@@ -146,15 +150,15 @@ class CompareData:
         cr_log_lst = list(
             map(lambda x: dict(x, time_stamp=datetime.strptime(x.get('time_stamp'), '%Y-%m-%dT%H:%M:%SZ')), cr_log_lst))
         # Add end_time of last log
-        cr_log_lst[-1].update({'end_time': cr_log_lst[-1].get('time_stamp') + timedelta(minutes=30)})
+        cr_log_lst[-1].update({'end_time': cr_log_lst[-1].get('time_stamp') + timedelta(minutes=close_session)})
         last_dct = cr_log_lst[-1]
         cr_log_lst.pop(-1)
         cr_log_lst.append(last_dct)
         # Calc differential of start and end time log
         cr_log_lst = list(map(lambda x: dict(x, diff=x.get('end_time') - x.get('time_stamp')), cr_log_lst))
         cr_log_lst = list(
-            map(lambda x: dict(x, end_time=x.get('time_stamp') + timedelta(minutes=30)) if x.get(
-                'diff').seconds > 1800 else dict(x, end_time=x.get('end_time')), cr_log_lst))
+            map(lambda x: dict(x, end_time=x.get('time_stamp') + timedelta(minutes=close_session)) if x.get(
+                'diff').seconds > close_session*60 else dict(x, end_time=x.get('end_time')), cr_log_lst))
 
         sys_id_cr_log_lst = list(filter(lambda x: x.get('sys_id') == sys_id, cr_log_lst))
         act_id_cr_log_lst = list(filter(lambda x: x.get('action_id') == action_id, sys_id_cr_log_lst))
@@ -214,16 +218,17 @@ class CompareData:
         return sum_pro_dur_lst
 
     @staticmethod
-    def calc_sessions(session_list, final_list=[], fn_lst=[]):
+    def calc_sessions(session_list, output_logs, customize_epg, final_list=[], fn_lst=[]):
         """
         This def is writen to calc sum duration and visit each session and compliance with EPG
         and send to rabbitmq
+
         """
         for session in session_list:
-            session_data_output = data_output[data_output['session_id'] == session]
-            call_class = CompareData(session_data_output, cr_epg_lst)
+            session_data_output = output_logs[output_logs['session_id'] == session]
+            call_class = CompareData(session_data_output, customize_epg)
             try:
-                log_act_filter = call_class.log_thread('09', '1', '1', '1')
+                log_act_filter = call_class.log_thread('09', '1', '1', '1', 30)
             except IndexError:
                 continue
             mnr_process_log_output = list(map(lambda x: call_class.process_log(x), log_act_filter))
@@ -275,6 +280,7 @@ class SendData:
     """
     This class is written to Send Data
     """
+
     def __init__(self, host, username, password):
         credentials = pika.PlainCredentials(username=username, password=password)
         connection = pika.BlockingConnection(
@@ -298,31 +304,31 @@ class SendData:
         self.connection.close()
 
 
-# connect to rabbitmq
-call_send_data = SendData('192.168.143.39', 'admin', 'R@bbitMQ1!')
-
-# Registration of specifications of start and end time of logs and elastic search
-call_extract_data = ExtractData('2022-04-18T23:00:01Z', '2022-04-18T23:59:59Z', 4, 22,
-                                "http://norozzadeh:Kibana@110$%^@192.168.143.34:9200", 'live-action', 'time_stamp',
-                                '1m', 10000)
-# extract logs
-data_output = call_extract_data.get_data()
-
-# GET dataframe of EPG and customize field
-df = pd.read_excel('epg_pro1.xlsx', index_col=False)
-cr_epg_lst = ExtractData.extract_epg(df)
-
-# extract set of session id
-session_set = set(data_output['session_id'])
-
-# calc sum duration and visit of sessions
-final = CompareData.calc_sessions(session_set, [], [])
-
-# convert logs data to multi chunks
-session_lst = list(session_set)
-chunks = [session_lst[s_id:s_id + 50] for s_id in range(0, len(session_lst), 50)]
-# start of calculations
-for chunk in chunks:
-    t1 = Thread(target=CompareData.calc_sessions, args=[chunk, [], []])
-    t1.start()
-# call_send_data.close_connection_rabbit()
+# # connect to rabbitmq
+# call_send_data = SendData('192.168.143.39', 'admin', 'R@bbitMQ1!')
+#
+# # Registration of specifications of start and end time of logs and elastic search
+# call_extract_data = ExtractData('2022-04-18T23:00:01Z', '2022-04-18T23:59:59Z', 4, 22,
+#                                 "http://norozzadeh:Kibana@110$%^@192.168.143.34:9200", 'live-action', 'time_stamp',
+#                                 '1m', 10000)
+# # extract logs
+# data_output = call_extract_data.get_data()
+#
+# # GET dataframe of EPG and customize field
+# df = pd.read_excel('epg_pro1.xlsx', index_col=False)
+# cr_epg_lst = ExtractData.extract_epg(df)
+#
+# # extract set of session id
+# session_set = set(data_output['session_id'])
+#
+# # calc sum duration and visit of sessions
+# # final = CompareData.calc_sessions(session_set, [], [])
+#
+# # convert logs data to multi chunks
+# session_lst = list(session_set)
+# chunks = [session_lst[s_id:s_id + 50] for s_id in range(0, len(session_lst), 50)]
+# # start of calculations
+# for chunk in chunks:
+#     t1 = Thread(target=CompareData.calc_sessions, args=[chunk, data_output, cr_epg_lst, [], []])
+#     t1.start()
+# # call_send_data.close_connection_rabbit()
