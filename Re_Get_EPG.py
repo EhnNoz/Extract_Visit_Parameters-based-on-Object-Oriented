@@ -1,3 +1,7 @@
+"""
+This code is written to extract the data from API
+
+"""
 import ast
 import json
 import re
@@ -11,6 +15,9 @@ from sqlalchemy import create_engine
 
 
 class GetAPI:
+    """
+    This class is written to extract epg
+    """
     def __init__(self, url, key, start_time, end_time):
         self.url = url
         self.key = key
