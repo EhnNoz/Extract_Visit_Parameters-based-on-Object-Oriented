@@ -1,3 +1,9 @@
+"""
+Main file to process log and performs the following tasks:
+1) Get API
+2) Calc Duration and visit each log
+
+"""
 from datetime import datetime, timedelta
 from itertools import chain
 from threading import Thread
@@ -9,12 +15,15 @@ import pandas as pd
 
 
 def get_epg():
+    # Call API
     call_get_api = GetAPI('https://epgservices.irib.ir:84/Service_EPG.svc/GetEpgNetwork',
                           "EPG99f06e12YHNbgtrfvCDEolmnbvc",
                           '04/18/2022', '04/18/2022')
+    # Determining the data code
     epg_data = list(map(lambda x: call_get_api.post_api(x), list(range(30, 40))))
+    # Remove None Value
     pure_epg_data = list(filter(lambda x: x, epg_data))
-
+    # Split Date and Time
     split_list = []
     for channel_epg in pure_epg_data:
         add_year_hour = list(map(lambda x: dict(x, start_year=GetAPI.split_date_time(x.get('Time_Play'))[0],
@@ -23,8 +32,9 @@ def get_epg():
                                                 end_hour=GetAPI.split_date_time(x.get('EP'))[1]
                                                 ), channel_epg))
         split_list.append(add_year_hour)
-
+    # Convert to list
     flat_split_list = list(chain.from_iterable(split_list))
+    # Convert time to Georgian
     flat_split_list = list(
         map(lambda x: dict(x, Time_Play_x=(datetime.strptime(x.get('Time_Play'), '%m/%d/%Y %I:%M:%S %p') -
                                            timedelta(hours=4, minutes=30))), flat_split_list))
@@ -33,9 +43,11 @@ def get_epg():
             flat_split_list))
     JTime = call_get_api.start_time
     df = pd.DataFrame.from_records(flat_split_list)
+    # Add Jalali Date
     df['j_Time_Play'] = jdatetime.date.fromgregorian(day=int(JTime.split('/')[1]),
                                                      month=int(JTime.split('/')[0]),
                                                      year=int(JTime.split('/')[2]))
+    # Insert to data base
     df = df.astype(str)
     db_engine = create_engine('postgresql://postgres:nrz1371@localhost/samak', pool_size=20, max_overflow=100)
     df.to_sql('Re_EpgRec', db_engine.connect(), if_exists='replace', index=False)
