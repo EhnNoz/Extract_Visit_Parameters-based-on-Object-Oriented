@@ -1,18 +1,41 @@
+"""
+This code is written to extract the:
+ 1) Visit
+ 2) Time Duration
+ based on client side logs
+
+"""
+import json
 from datetime import datetime, timedelta
 from itertools import chain
 from threading import Thread
 import pandas as pd
+import pika
 from elasticsearch import Elasticsearch
-from sqlalchemy import create_engine
+# from sqlalchemy import create_engine
 
-db_engine = create_engine('postgresql://postgres:nrz1371@localhost/samak', pool_size=20, max_overflow=100)
-db_connected = db_engine.connect()
+# db_engine = create_engine('postgresql://postgres:nrz1371@localhost/samak', pool_size=20, max_overflow=100)
+# db_connected = db_engine.connect()
 
 
 class ExtractData:
-    def __init__(self, start_time, end_time, engine_elastic, table_name, field_name, scroll, size):
+    """
+    This class is writen to:
+     1) extract data of Elastic Search database (get_data)
+     2) customize epg field (extract_epg)
+    """
+    def __init__(self, start_time, end_time, hour_dif, minutes_dif, engine_elastic, table_name,
+                 field_name, scroll, size):
+        start_time = datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ')
+        start_time = start_time - timedelta(hours=hour_dif, minutes=minutes_dif)
+        start_time = datetime.strftime(start_time, '%Y-%m-%dT%H:%M:%SZ')
+        end_time = datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ')
+        end_time = end_time - timedelta(hours=hour_dif, minutes=minutes_dif)
+        end_time = datetime.strftime(end_time, '%Y-%m-%dT%H:%M:%SZ')
         self.start_time = start_time
         self.end_time = end_time
+        self.hour_dif = hour_dif
+        self.minutes_dif = minutes_dif
         self.engine_elastic = engine_elastic
         self.table_name = table_name
         self.field_name = field_name
@@ -20,6 +43,10 @@ class ExtractData:
         self.size_value = size
 
     def get_data(self):
+        """
+        this func is written to extract data based on time stamp
+        output func is dataframe
+        """
         es = Elasticsearch(hosts=self.engine_elastic)
         body = {'query': {'bool': {'must': [{'match_all': {}},
                                             {'range': {self.field_name: {'gte': '{}'.format(self.start_time),
@@ -57,10 +84,21 @@ class ExtractData:
             read_file = read_file.astype(str)
             summ = scroll_size + summ
             print(summ)
+        read_file['time_stamp'] = read_file['time_stamp'].apply(lambda x: datetime.strptime(x, '%Y-%m-%dT%H:%M:%SZ'))
+        read_file['time_stamp'] = read_file['time_stamp'].apply(
+            lambda x: x + timedelta(hours=self.hour_dif, minutes=self.minutes_dif))
+        read_file['time_stamp'] = read_file['time_stamp'].apply(lambda x: datetime.strftime(x, '%Y-%m-%dT%H:%M:%SZ'))
         return read_file
 
     @staticmethod
     def extract_epg(data_frame):
+        """
+        this func is written to customize epg field and 'Time_Play' & 'EP' convert to time type
+        :param data_frame:
+        :return: list of EPG details
+        """
+        data_frame = data_frame.drop(
+            columns=['ID_Program', 'end_hour', 'end_year', 'start_hour', 'start_year', 'ID_Kind', 'channel_code'])
         epg_lst = data_frame.to_dict(orient='records')
         epg_lst = list(map(lambda x: dict(x, duration_sum=0), epg_lst))
         epg_lst = list(map(lambda x: dict(x, visit_sum=0), epg_lst))
@@ -78,11 +116,26 @@ class ExtractData:
 
 
 class CompareData:
+    """
+    This class is written to:
+    1) filter log based (log_thread)
+    2) calc duration and visit each log (process_log)
+    3) calc sum duration and visit each session and compliance with EPG
+        and send to rabbitmq (calc_sessions)
+    """
     def __init__(self, log_data_frame, epg_lst):
         self.log_lst = log_data_frame.to_dict(orient='records')
         self.epg_lst = epg_lst
 
     def log_thread(self, sys_id, service_id, action_id, con_type_id):
+        """
+        This def is writen to filter log based on follow:
+        :param sys_id:
+        :param service_id:
+        :param action_id:
+        :param con_type_id:
+        :return: list of dict of filtered log
+        """
         sorted_log_lst = sorted(self.log_lst, key=lambda d: d['time_stamp'])
         time_stamp_list = list(map(lambda x: x.get('time_stamp'), sorted_log_lst))
         time_stamp_list.pop(0)
@@ -110,8 +163,11 @@ class CompareData:
         return service_id_cr_log_lst
 
     def process_log(self, log):
-        cr_epg_lst = self.epg_lst
+        """
+        This def is writen to calc duration and visit each log
+        """
 
+        cr_epg_lst = self.epg_lst
         start_time = log.get('time_stamp')
         # print(f'start:{start_time}')
         end_time = log.get('end_time')
@@ -159,6 +215,10 @@ class CompareData:
 
     @staticmethod
     def calc_sessions(session_list, final_list=[], fn_lst=[]):
+        """
+        This def is writen to calc sum duration and visit each session and compliance with EPG
+        and send to rabbitmq
+        """
         for session in session_list:
             session_data_output = data_output[data_output['session_id'] == session]
             call_class = CompareData(session_data_output, cr_epg_lst)
@@ -181,7 +241,7 @@ class CompareData:
                 flt_lst_id = list(filter(lambda x: x.get('id') == id_num, item))
                 sum_result = sum(d.get('duration_sum', 0) for d in flt_lst_id)
                 sum_lst.append(sum_result)
-                flt_lst_id[0].update({'duration_sum': sum_result})
+                flt_lst_id[0].update({'duration_sum': sum_result / 60})
                 flt_lst_id[0].update({'visit_sum': 1})
                 unique_lst.append(flt_lst_id[0])
             # print(sum_lst)
@@ -193,67 +253,76 @@ class CompareData:
         fn_lst = list(chain.from_iterable(fn_lst))
         if fn_lst:
             fn_df = pd.DataFrame(fn_lst)
-            fn_df.to_sql('Re_DurVis', db_connected, if_exists='append', index=False)
+            fn_df.rename(
+                columns={'channel_name': 'channel', 'visit_sum': 'visit', 'duration_sum': 'dur', 'id': 'u_visit'},
+                inplace=True)
+            fn_df = fn_df.astype(str)
+            fn_dct = fn_df.to_dict('records')
 
-        print(fn_lst)
+            for q in fn_dct:
+                msg = q
+                try:
+                    call_send_data.send_to_rabbit(msg, 'test_dur', 'test_dur')
+
+                except:
+                    call_send_data = SendData('192.168.143.39', 'admin', 'R@bbitMQ1!')
+                    call_send_data.send_to_rabbit(msg, 'test_dur', 'test_dur')
+
         return fn_lst
 
 
-call_extract_data = ExtractData('2022-04-18T00:00:01Z', '2022-04-18T23:59:59Z',
-                                "http://norozzadeh:Kibana@110$%^@192.168.143.34:9200", 'live-action', '@timestamp',
+class SendData:
+    """
+    This class is written to Send Data
+    """
+    def __init__(self, host, username, password):
+        credentials = pika.PlainCredentials(username=username, password=password)
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(host=host, port=5672, credentials=credentials))
+        self.connection = connection
+        self.channel = self.connection.channel()
+
+    def send_to_rabbit(self, msg, exchange_name, routing_key_name):
+        """
+        :param msg:
+        :param exchange_name:
+        :param routing_key_name:
+        :return:
+        """
+        self.channel.basic_publish(exchange=exchange_name, routing_key=routing_key_name,
+                                   properties=pika.BasicProperties(
+                                       content_type='application/json'),
+                                   body=json.dumps(msg, ensure_ascii=False))
+
+    def close_connection_rabbit(self):
+        self.connection.close()
+
+
+# connect to rabbitmq
+call_send_data = SendData('192.168.143.39', 'admin', 'R@bbitMQ1!')
+
+# Registration of specifications of start and end time of logs and elastic search
+call_extract_data = ExtractData('2022-04-18T23:00:01Z', '2022-04-18T23:59:59Z', 4, 22,
+                                "http://norozzadeh:Kibana@110$%^@192.168.143.34:9200", 'live-action', 'time_stamp',
                                 '1m', 10000)
+# extract logs
+data_output = call_extract_data.get_data()
+
+# GET dataframe of EPG and customize field
 df = pd.read_excel('epg_pro1.xlsx', index_col=False)
 cr_epg_lst = ExtractData.extract_epg(df)
 
-data_output = call_extract_data.get_data()
+# extract set of session id
 session_set = set(data_output['session_id'])
+
+# calc sum duration and visit of sessions
 final = CompareData.calc_sessions(session_set, [], [])
+
+# convert logs data to multi chunks
 session_lst = list(session_set)
 chunks = [session_lst[s_id:s_id + 50] for s_id in range(0, len(session_lst), 50)]
+# start of calculations
 for chunk in chunks:
     t1 = Thread(target=CompareData.calc_sessions, args=[chunk, [], []])
     t1.start()
-
-#
-# final_list =[]
-# for session in session_set:
-#     if session =='f670be01-221c-4ebb-8eb2-72ce837e7cb8':
-#         session_data_output = data_output[data_output['session_id'] == session]
-#         call_class = CompareData(session_data_output, cr_epg_lst)
-#         try:
-#             log_act_filter = call_class.log_thread('09', '1', '1', '1')
-#         except IndexError:
-#             continue
-#         mnr_process_log_output = list(map(lambda x: call_class.process_log(x), log_act_filter))
-#         mnr_process_log_output = list(filter(None, mnr_process_log_output))
-#         mnr_process_log_output = list(chain.from_iterable(mnr_process_log_output))
-#         if mnr_process_log_output:
-#             final_list.append(mnr_process_log_output)
-#
-# f_lst = []
-# for init_item in final_list:
-#     item = init_item.copy()
-#     print(len(item))
-#     result = [e.get('id') for e in item]
-#     result = set(result)
-#     print(f'result:{result}')
-#     sum_lst = []
-#     unique_lst = []
-#     for id_num in result:
-#         # print(f'result:{result}')
-#         flt_lst_id = list(filter(lambda x: x.get('id') == id_num, item))
-#         print(f'flt_lst_id:{flt_lst_id}')
-#         sum_result = [d.get('duration_sum') for d in flt_lst_id]
-#         print(sum_result)
-#         x_p = sum(sum_result)
-#         print(x_p)
-#     #     sum_lst.append(sum_result)
-#         flt_lst_id[0].update({'duration_sum':x_p})
-#     #     flt_lst_id[0].update({'visit_sum': 1})
-#         unique_lst.append(flt_lst_id[0])
-#     # print(sum_lst)
-#     f_lst.append(unique_lst)
-#     print(final_list)
-#
-#
-# 95406a90-053d-46f1-b7ed-c202c90599f7  03:47
+# call_send_data.close_connection_rabbit()
