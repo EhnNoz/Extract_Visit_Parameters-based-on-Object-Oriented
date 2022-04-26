@@ -2,8 +2,10 @@
 Main file to process log and performs the following tasks:
 1) Get API
 2) Calc Duration and visit each log
+3) Calc Unique Visit
 
 """
+import time
 from datetime import datetime, timedelta
 from itertools import chain
 from threading import Thread
@@ -12,15 +14,19 @@ from sqlalchemy import create_engine
 from Re_GetDuration import ExtractData, CompareData, SendData
 from Re_Get_EPG import GetAPI
 import pandas as pd
+import pause
 
 
-def get_epg():
+def get_epg(epg_start_time, epg_end_time, epg_hour_dif):
+    # Convert time to desire format
+    epg_start_time = ExtractData.convert_time(epg_start_time)
+    epg_end_time = ExtractData.convert_time(epg_end_time)
     # Call API
     call_get_api = GetAPI('https://epgservices.irib.ir:84/Service_EPG.svc/GetEpgNetwork',
                           "EPG99f06e12YHNbgtrfvCDEolmnbvc",
-                          '04/18/2022', '04/18/2022')
+                          epg_start_time, epg_end_time)
     # Determining the data code
-    epg_data = list(map(lambda x: call_get_api.post_api(x), list(range(30, 40))))
+    epg_data = list(map(lambda x: call_get_api.post_api(x), list(range(21, 230))))
     # Remove None Value
     pure_epg_data = list(filter(lambda x: x, epg_data))
     # Split Date and Time
@@ -37,7 +43,7 @@ def get_epg():
     # Convert time to Georgian
     flat_split_list = list(
         map(lambda x: dict(x, Time_Play_x=(datetime.strptime(x.get('Time_Play'), '%m/%d/%Y %I:%M:%S %p') -
-                                           timedelta(hours=4, minutes=30))), flat_split_list))
+                                           timedelta(hours=epg_hour_dif, minutes=30))), flat_split_list))
     flat_split_list = list(
         map(lambda x: dict(x, Time_Play_x=(datetime.strftime(x.get('Time_Play_x'), '%Y-%m-%dT%H:%M:%S'))),
             flat_split_list))
@@ -54,16 +60,19 @@ def get_epg():
     # df.to_excel('epg_pro1.xlsx', index=False)
 
 
-def claculation_visit_duration():
+def claculation_visit_duration(data_start_time, data_end_time, log_hour_dif):
     # connect to rabbitmq (must be check CompareData.calc_sessions)
     call_send_data = SendData('192.168.143.39', 'admin', 'R@bbitMQ1!')
 
     # Registration of specifications of start and end time of logs and elastic search
-    call_extract_data = ExtractData('2022-04-18T23:00:01Z', '2022-04-18T23:59:59Z', 4, 22,
+    call_extract_data = ExtractData(data_start_time, data_end_time, log_hour_dif, 22,
                                     "http://norozzadeh:Kibana@110$%^@192.168.143.34:9200", 'live-action', 'time_stamp',
                                     '1m', 10000)
     # extract logs
     data_output = call_extract_data.get_data()
+    data_output = data_output[
+        ['time_stamp', '@version', 'sys_id', 'time_code', '@timestamp', 'service_id', 'session_id',
+         'content_name', 'channel_name', 'content_type_id', 'action_id']]
     # GET dataframe of EPG and customize field
     db_engine = create_engine('postgresql://postgres:nrz1371@localhost/samak')
     epg = pd.read_sql_query('SELECT * FROM public."Re_EpgRec"', con=db_engine.connect())
@@ -86,5 +95,82 @@ def claculation_visit_duration():
     # call_send_data.close_connection_rabbit()
 
 
-get_epg()
-claculation_visit_duration()
+def unique_visit(data_start_time, data_end_time, log_hour_dif):
+    # ٍExtract session log
+    call_extract_data = ExtractData(data_start_time, data_end_time, log_hour_dif, 22,
+                                    "http://norozzadeh:Kibana@110$%^@192.168.143.34:9200", 'live-action', 'time_stamp',
+                                    '1m', 10000)
+    session_output = call_extract_data.get_data()
+    # Extract user log
+    call_extract_data = ExtractData(data_start_time, data_end_time, log_hour_dif, 22,
+                                    "http://norozzadeh:Kibana@110$%^@192.168.143.34:9200", 'live-login', 'time_stamp',
+                                    '1m', 10000)
+    user_output = call_extract_data.get_data()
+    # Merge session and user based on session_id
+    user_behave = pd.merge(session_output, user_output, on='session_id')
+    # Drop duplicate logs
+    user_behave = user_behave.drop_duplicates(['user_id', 'content_name', 'channel_name'])
+    # Add date column
+    user_behave['date'] = ''
+    # Keep requirements columns
+    user_behave = user_behave[['content_name', 'channel_name',
+                               'user_id', 'time_stamp_x', 'sys_id_y',
+                               'user_agent', 'referer', 'xReferer', 'date']]
+    # Connect to the db and get EPG table
+    db_engine = create_engine('postgresql://postgres:nrz1371@localhost/samak')
+    epg = pd.read_sql_query('SELECT * FROM public."Re_EpgRec"', con=db_engine.connect())
+    cr_epg_lst = ExtractData.extract_epg(epg)
+    # Convert df to dict
+    user_behave_dict = user_behave.to_dict('records')
+    # Convert time-stamp to desired format
+    user_behave_dict = list(
+        map(lambda x: dict(x, time_stamp_x=datetime.strptime(x.get('time_stamp_x'), '%Y-%m-%dT%H:%M:%SZ')),
+            user_behave_dict))
+    # Matching logs to epg
+    user_behave_list = []
+    for item in user_behave_dict:
+        log_time = item.get('time_stamp_x')
+        log_channel = item.get('channel_name')
+        com_output = list(filter(lambda x: (x.get('Time_Play') < log_time < x.get('EP')) and
+                                           (log_channel == x.get('channel_name')), cr_epg_lst))
+        try:
+            item.update(com_output[0])
+            user_behave_list.append(item)
+        except IndexError:
+            pass
+    # Convert some keys for desired parameters
+    user_behave_list = list(map(lambda x: dict(x, time_stamp_y_new=x.get('Time_Play_x')), user_behave_list))
+    user_behave_list = list(
+        map(lambda x: dict(x, Time_Play_x=x.get('time_stamp_x') - timedelta(hours=4, minutes=30)), user_behave_list))
+    user_behave_list = list(map(lambda x: dict(x, channel=x.get('channel_name')), user_behave_list))
+    # Convert list of dict to df
+    user_behave_df = pd.DataFrame(user_behave_list)
+    user_behave_df = user_behave_df.astype(str)
+    user_behave_df = user_behave_df[['Name_Item', 'channel',
+                                     'user_id', 'Time_Play_x', 'sys_id_y',
+                                     'user_agent', 'referer', 'xReferer', 'time_stamp_y_new', 'j_Time_Play']]
+    # Send Data to DataFrame
+    print(len(user_behave_df))
+    user_behave_dict = user_behave_df.to_dict('records')
+    call_send_data = SendData('192.168.143.39', 'admin', 'R@bbitMQ1!')
+    for msg in user_behave_dict:
+        # msg = q
+        call_send_data.send_to_rabbit(msg, 'test_dur', 'test_dur')
+
+    # return user_behave
+
+
+for day in range(0, 365):
+    # rec_start_time = '2022-04-18T18:00:01Z'
+    # rec_end_time = '2022-04-18T23:59:59Z'
+    add_rec_start_time = datetime(2022, 4, 18, 00, 00, 1) + timedelta(days=day)
+    add_rec_end_time = datetime(2022, 4, 18, 23, 59, 59) + timedelta(days=day)
+    rec_start_time = datetime.strftime(add_rec_start_time, '%Y-%m-%dT%H:%M:%SZ')
+    rec_end_time = datetime.strftime(add_rec_end_time, '%Y-%m-%dT%H:%M:%SZ')
+    rec_hour_dif = 4
+    get_epg(rec_start_time, rec_end_time, rec_hour_dif)
+    time.sleep(60)
+    claculation_visit_duration(rec_start_time, rec_end_time, rec_hour_dif)
+    time.sleep(60)
+    unique_visit(rec_start_time, rec_end_time, rec_hour_dif)
+    pause.until(add_rec_end_time + timedelta(days=1))
