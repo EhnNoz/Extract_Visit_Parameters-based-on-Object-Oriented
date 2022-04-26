@@ -81,9 +81,10 @@ class ExtractData:
             scroll_size = len(data['hits']['hits'])
 
             read_file = read_file.append(process_output, ignore_index=True)
-            read_file = read_file[
-                ['time_stamp', '@version', 'sys_id', 'time_code', '@timestamp', 'service_id', 'session_id',
-                 'content_name', 'channel_name', 'content_type_id', 'action_id']]
+            print(process_output.columns)
+            # read_file = read_file[
+            #     ['time_stamp', '@version', 'sys_id', 'time_code', '@timestamp', 'service_id', 'session_id',
+            #      'content_name', 'channel_name', 'content_type_id', 'action_id']]
             read_file = read_file.astype(str)
             summ = scroll_size + summ
             print(summ)
@@ -116,6 +117,16 @@ class ExtractData:
                 epg_lst))
         cr_epg_lst = list(map(lambda x: dict(x, EP=datetime.strptime(x.get('EP'), '%m/%d/%Y %I:%M:%S %p')), cr_epg_lst))
         return cr_epg_lst
+
+    @staticmethod
+    def convert_time(desire_time):
+        """
+        :param desire_time: eg: 2022-04-18T23:00:01Z
+        :return: str(time) eg: 05/18/2022
+        """
+        desire_time = datetime.strptime(desire_time, '%Y-%m-%dT%H:%M:%SZ')
+        desire_time = datetime.strftime(desire_time, '%m/%d/%Y')
+        return desire_time
 
 
 class CompareData:
@@ -290,10 +301,10 @@ class SendData:
 
     def send_to_rabbit(self, msg, exchange_name, routing_key_name):
         """
-        :param msg:
-        :param exchange_name:
-        :param routing_key_name:
-        :return:
+        :param msg: log of EPG with Duration and visit
+        :param exchange_name: exchange of Rabbitmq
+        :param routing_key_name: routing_key of Rabbitmq
+
         """
         self.channel.basic_publish(exchange=exchange_name, routing_key=routing_key_name,
                                    properties=pika.BasicProperties(
@@ -313,6 +324,9 @@ class SendData:
 #                                 '1m', 10000)
 # # extract logs
 # data_output = call_extract_data.get_data()
+# data_output = data_output[
+#     ['time_stamp', '@version', 'sys_id', 'time_code', '@timestamp', 'service_id', 'session_id',
+#      'content_name', 'channel_name', 'content_type_id', 'action_id']]
 #
 # # GET dataframe of EPG and customize field
 # df = pd.read_excel('epg_pro1.xlsx', index_col=False)
