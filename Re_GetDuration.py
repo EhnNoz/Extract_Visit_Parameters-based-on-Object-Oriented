@@ -81,13 +81,13 @@ class ExtractData:
             scroll_size = len(data['hits']['hits'])
 
             read_file = read_file.append(process_output, ignore_index=True)
-            print(process_output.columns)
+            # print(process_output.columns)
             # read_file = read_file[
             #     ['time_stamp', '@version', 'sys_id', 'time_code', '@timestamp', 'service_id', 'session_id',
             #      'content_name', 'channel_name', 'content_type_id', 'action_id']]
             read_file = read_file.astype(str)
             summ = scroll_size + summ
-            print(summ)
+            # print(summ)
         read_file['time_stamp'] = read_file['time_stamp'].apply(lambda x: datetime.strptime(x, '%Y-%m-%dT%H:%M:%SZ'))
         read_file['time_stamp'] = read_file['time_stamp'].apply(
             lambda x: x + timedelta(hours=self.hour_dif, minutes=self.minutes_dif))
@@ -239,7 +239,7 @@ class CompareData:
             session_data_output = output_logs[output_logs['session_id'] == session]
             call_class = CompareData(session_data_output, customize_epg)
             try:
-                log_act_filter = call_class.log_thread('09', '1', '1', '1', 30)
+                log_act_filter = call_class.log_thread('09', '1', '1', '1', 15)
             except IndexError:
                 continue
             mnr_process_log_output = list(map(lambda x: call_class.process_log(x), log_act_filter))
@@ -278,11 +278,11 @@ class CompareData:
             for q in fn_dct:
                 msg = q
                 try:
-                    call_send_data.send_to_rabbit(msg, 'test_dur', 'test_dur')
+                    call_send_data.send_to_rabbit(msg, 'durvisit', 'durvisit')
 
                 except:
                     call_send_data = SendData('192.168.143.39', 'admin', 'R@bbitMQ1!')
-                    call_send_data.send_to_rabbit(msg, 'test_dur', 'test_dur')
+                    call_send_data.send_to_rabbit(msg, 'durvisit', 'durvisit')
 
         return fn_lst
 
