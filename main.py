@@ -149,28 +149,48 @@ def unique_visit(data_start_time, data_end_time, log_hour_dif):
     user_behave_df = user_behave_df[['Name_Item', 'channel',
                                      'user_id', 'Time_Play_x', 'sys_id_y',
                                      'user_agent', 'referer', 'xReferer', 'time_stamp_y_new', 'j_Time_Play']]
+    # To insert data in rabbitmq, convert time to str is necessary
+    user_behave_df["Time_Play_x"] = pd.to_datetime(user_behave_df["Time_Play_x"])
+    user_behave_df["time_stamp_y_new"] = pd.to_datetime(user_behave_df["time_stamp_y_new"])
+    user_behave_df['Time_Play_x'] = user_behave_df['Time_Play_x'].apply(
+        lambda x: pd.Timestamp(x).strftime('%Y-%m-%dT%H:%M:%S'))
+    user_behave_df['time_stamp_y_new'] = user_behave_df['time_stamp_y_new'].apply(
+        lambda x: pd.Timestamp(x).strftime('%Y-%m-%dT%H:%M:%S'))
     # Send Data to DataFrame
     print(len(user_behave_df))
     user_behave_dict = user_behave_df.to_dict('records')
     call_send_data = SendData('192.168.143.39', 'admin', 'R@bbitMQ1!')
     for msg in user_behave_dict:
         # msg = q
-        call_send_data.send_to_rabbit(msg, 'test_dur', 'test_dur')
+        call_send_data.send_to_rabbit(msg, 'uniqueuser', 'uniqueuser')
 
     # return user_behave
 
 
+count = 0
 for day in range(0, 365):
+
+    if count == 0:
+        count = 1
+        # print('1st')
+        time.sleep(32400)
+    else:
+        time.sleep(60)
     # rec_start_time = '2022-04-18T18:00:01Z'
     # rec_end_time = '2022-04-18T23:59:59Z'
-    add_rec_start_time = datetime(2022, 4, 18, 00, 00, 1) + timedelta(days=day)
-    add_rec_end_time = datetime(2022, 4, 18, 23, 59, 59) + timedelta(days=day)
+    add_rec_start_time = datetime(2022, 4, 26, 00, 00, 1) + timedelta(days=day)
+    add_rec_end_time = datetime(2022, 4, 26, 23, 59, 59) + timedelta(days=day)
     rec_start_time = datetime.strftime(add_rec_start_time, '%Y-%m-%dT%H:%M:%SZ')
     rec_end_time = datetime.strftime(add_rec_end_time, '%Y-%m-%dT%H:%M:%SZ')
     rec_hour_dif = 4
     get_epg(rec_start_time, rec_end_time, rec_hour_dif)
+    # print('2nd')
     time.sleep(60)
+    print(datetime.now())
     claculation_visit_duration(rec_start_time, rec_end_time, rec_hour_dif)
     time.sleep(60)
+    print(datetime.now())
+    # print('3rd')
     unique_visit(rec_start_time, rec_end_time, rec_hour_dif)
+    # print('finish')
     pause.until(add_rec_end_time + timedelta(days=1))
