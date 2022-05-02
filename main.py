@@ -13,6 +13,7 @@ import jdatetime
 from sqlalchemy import create_engine
 from Re_GetDuration import ExtractData, CompareData, SendData
 from Re_Get_EPG import GetAPI
+from Manual_EPG import ManualEPG
 import pandas as pd
 import pause
 
@@ -27,8 +28,12 @@ def get_epg(epg_start_time, epg_end_time, epg_hour_dif):
                           epg_start_time, epg_end_time)
     # Determining the data code
     epg_data = list(map(lambda x: call_get_api.post_api(x), list(range(21, 230))))
+    print(epg_data)
     # Remove None Value
     pure_epg_data = list(filter(lambda x: x, epg_data))
+
+
+    print(pure_epg_data)
     # Split Date and Time
     split_list = []
     for channel_epg in pure_epg_data:
@@ -38,8 +43,16 @@ def get_epg(epg_start_time, epg_end_time, epg_hour_dif):
                                                 end_hour=GetAPI.split_date_time(x.get('EP'))[1]
                                                 ), channel_epg))
         split_list.append(add_year_hour)
+
     # Convert to list
     flat_split_list = list(chain.from_iterable(split_list))
+    if not flat_split_list:
+        manual_df = pd.read_excel(r'manual_epg.xlsx', index_col=False)
+        call_manual_epg = ManualEPG(manual_df, epg_start_time)
+        manual_df['Time_Play'] = manual_df['ID_Day_Item'].apply(lambda input_x: call_manual_epg.insert_start_time(input_x))
+        manual_df['EP'] = manual_df['ID_Day_Item'].apply(lambda input_x: call_manual_epg.insert_end_time(input_x))
+        flat_split_list = manual_df.to_dict('records')
+    print(flat_split_list)
     # Convert time to Georgian
     flat_split_list = list(
         map(lambda x: dict(x, Time_Play_x=(datetime.strptime(x.get('Time_Play'), '%m/%d/%Y %I:%M:%S %p') -
@@ -170,27 +183,30 @@ def unique_visit(data_start_time, data_end_time, log_hour_dif):
 count = 0
 for day in range(0, 365):
 
-    if count == 0:
-        count = 1
-        # print('1st')
-        time.sleep(32400)
-    else:
-        time.sleep(60)
+    # if count == 0:
+    #     count = 1
+    #     print('1st')
+    #     time.sleep(32400)
+    # else:
+    #     time.sleep(60)
     # rec_start_time = '2022-04-18T18:00:01Z'
     # rec_end_time = '2022-04-18T23:59:59Z'
-    add_rec_start_time = datetime(2022, 4, 26, 00, 00, 1) + timedelta(days=day)
-    add_rec_end_time = datetime(2022, 4, 26, 23, 59, 59) + timedelta(days=day)
+    add_rec_start_time = datetime(2022, 5, 1, 00, 00, 1) + timedelta(days=day)
+    add_rec_end_time = datetime(2022, 5, 1, 23, 59, 59) + timedelta(days=day)
     rec_start_time = datetime.strftime(add_rec_start_time, '%Y-%m-%dT%H:%M:%SZ')
     rec_end_time = datetime.strftime(add_rec_end_time, '%Y-%m-%dT%H:%M:%SZ')
     rec_hour_dif = 4
     get_epg(rec_start_time, rec_end_time, rec_hour_dif)
-    # print('2nd')
-    time.sleep(60)
+    print('2nd')
+    time.sleep(30)
     print(datetime.now())
     claculation_visit_duration(rec_start_time, rec_end_time, rec_hour_dif)
     time.sleep(60)
     print(datetime.now())
-    # print('3rd')
+    print('3rd')
     unique_visit(rec_start_time, rec_end_time, rec_hour_dif)
-    # print('finish')
+    print('finish')
     pause.until(add_rec_end_time + timedelta(days=1))
+
+# use AP scheduler https://coderslegacy.com/python/apscheduler-tutorial-advanced-scheduler/
+
