@@ -140,6 +140,7 @@ class CompareData:
 
     def __init__(self, log_data_frame, epg_lst):
         self.log_lst = log_data_frame.to_dict(orient='records')
+        # self.log_lst = map(lambda x:  dict(x, channel_name='کچاپ') if x.get('null') else dict(x, channel_name=x.get('channel_name')), log_lst)
         self.epg_lst = epg_lst
 
     def log_thread(self, sys_id, service_id, action_id, con_type_id, close_session):
@@ -169,7 +170,7 @@ class CompareData:
         cr_log_lst = list(map(lambda x: dict(x, diff=x.get('end_time') - x.get('time_stamp')), cr_log_lst))
         cr_log_lst = list(
             map(lambda x: dict(x, end_time=x.get('time_stamp') + timedelta(minutes=close_session)) if x.get(
-                'diff').seconds > close_session*60 else dict(x, end_time=x.get('end_time')), cr_log_lst))
+                'diff').seconds > close_session * 60 else dict(x, end_time=x.get('end_time')), cr_log_lst))
 
         sys_id_cr_log_lst = list(filter(lambda x: x.get('sys_id') == sys_id, cr_log_lst))
         act_id_cr_log_lst = list(filter(lambda x: x.get('action_id') == action_id, sys_id_cr_log_lst))
@@ -229,13 +230,16 @@ class CompareData:
         return sum_pro_dur_lst
 
     @staticmethod
-    def calc_sessions(session_list, output_logs, customize_epg, final_list=[], fn_lst=[]):
+    def calc_sessions(iframe, session_list, output_logs, customize_epg, exchange_name, routing_key_name, final_list=[],
+                      fn_lst=[]):
         """
         This def is writen to calc sum duration and visit each session and compliance with EPG
         and send to rabbitmq
 
         """
         for session in session_list:
+            if len(session) == iframe:
+                continue
             session_data_output = output_logs[output_logs['session_id'] == session]
             call_class = CompareData(session_data_output, customize_epg)
             try:
@@ -247,6 +251,7 @@ class CompareData:
             mnr_process_log_output = list(chain.from_iterable(mnr_process_log_output))
             if mnr_process_log_output:
                 final_list.append(mnr_process_log_output)
+
         for item in final_list:
             result = [e.get('id') for e in item]
             result = set(result)
@@ -274,15 +279,17 @@ class CompareData:
                 inplace=True)
             fn_df = fn_df.astype(str)
             fn_dct = fn_df.to_dict('records')
+            # if iframe == 36:
+            #     fn_dct = list(map(lambda x: dict(x, Dec_Summary=str(iframe)), fn_dct))
 
             for q in fn_dct:
                 msg = q
                 try:
-                    call_send_data.send_to_rabbit(msg, 'durvisit', 'durvisit')
+                    call_send_data.send_to_rabbit(msg, exchange_name, routing_key_name)
 
                 except:
                     call_send_data = SendData('192.168.143.39', 'admin', 'R@bbitMQ1!')
-                    call_send_data.send_to_rabbit(msg, 'durvisit', 'durvisit')
+                    call_send_data.send_to_rabbit(msg, exchange_name, routing_key_name)
 
         return fn_lst
 
@@ -313,7 +320,6 @@ class SendData:
 
     def close_connection_rabbit(self):
         self.connection.close()
-
 
 # # connect to rabbitmq
 # call_send_data = SendData('192.168.143.39', 'admin', 'R@bbitMQ1!')
