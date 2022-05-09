@@ -27,11 +27,10 @@ def get_epg(epg_start_time, epg_end_time, epg_hour_dif):
                           "EPG99f06e12YHNbgtrfvCDEolmnbvc",
                           epg_start_time, epg_end_time)
     # Determining the data code
-    epg_data = list(map(lambda x: call_get_api.post_api(x), list(range(21, 230))))
+    epg_data = list(map(lambda x: call_get_api.post_api(x), list(range(30, 40))))
     print(epg_data)
     # Remove None Value
     pure_epg_data = list(filter(lambda x: x, epg_data))
-
 
     print(pure_epg_data)
     # Split Date and Time
@@ -46,13 +45,27 @@ def get_epg(epg_start_time, epg_end_time, epg_hour_dif):
 
     # Convert to list
     flat_split_list = list(chain.from_iterable(split_list))
+    # flat_split_list = []
+    flag = 0
     if not flat_split_list:
+        flag = 1
         manual_df = pd.read_excel(r'manual_epg.xlsx', index_col=False)
         call_manual_epg = ManualEPG(manual_df, epg_start_time)
-        manual_df['Time_Play'] = manual_df['ID_Day_Item'].apply(lambda input_x: call_manual_epg.insert_start_time(input_x))
+        manual_df['Time_Play'] = manual_df['ID_Day_Item'].apply(
+            lambda input_x: call_manual_epg.insert_start_time(input_x))
         manual_df['EP'] = manual_df['ID_Day_Item'].apply(lambda input_x: call_manual_epg.insert_end_time(input_x))
         flat_split_list = manual_df.to_dict('records')
     print(flat_split_list)
+    # Add Catchup Data
+    # if flag == 0:
+    #     manual_df = pd.read_excel(r'manual_epg.xlsx', index_col=False)
+    #     call_manual_epg = ManualEPG(manual_df, epg_start_time)
+    #     manual_df = manual_df[manual_df['channel_name'] == 'کچاپ']
+    #     manual_df['Time_Play'] = manual_df['ID_Day_Item'].apply(
+    #         lambda input_x: call_manual_epg.insert_start_time(input_x))
+    #     manual_df['EP'] = manual_df['ID_Day_Item'].apply(lambda input_x: call_manual_epg.insert_end_time(input_x))
+    #     manual_df_list = manual_df.to_dict('records')
+    #     flat_split_list.append(manual_df_list)
     # Convert time to Georgian
     flat_split_list = list(
         map(lambda x: dict(x, Time_Play_x=(datetime.strptime(x.get('Time_Play'), '%m/%d/%Y %I:%M:%S %p') -
@@ -69,7 +82,7 @@ def get_epg(epg_start_time, epg_end_time, epg_hour_dif):
     # Insert to data base
     df = df.astype(str)
     db_engine = create_engine('postgresql://postgres:nrz1371@localhost/samak', pool_size=20, max_overflow=100)
-    df.to_sql('Re_EpgRec', db_engine.connect(), if_exists='replace', index=False)
+    df.to_sql('Re_EpgRec2', db_engine.connect(), if_exists='replace', index=False)
     # df.to_excel('epg_pro1.xlsx', index=False)
 
 
@@ -103,8 +116,12 @@ def claculation_visit_duration(data_start_time, data_end_time, log_hour_dif):
     chunks = [session_lst[s_id:s_id + 50] for s_id in range(0, len(session_lst), 50)]
     # start of calculations
     for chunk in chunks:
-        t1 = Thread(target=CompareData.calc_sessions, args=[chunk, data_output, cr_epg_lst, [], []])
+        t1 = Thread(target=CompareData.calc_sessions,
+                    args=[0, chunk, data_output, cr_epg_lst, 'durvisit', 'durvisit', [], []])
+        # t2 = Thread(target=CompareData.calc_sessions,
+        #             args=[36, chunk, data_output, cr_epg_lst, 'durvisit', 'durvisit', [], []])
         t1.start()
+        # t2.start()
     # call_send_data.close_connection_rabbit()
 
 
@@ -182,17 +199,15 @@ def unique_visit(data_start_time, data_end_time, log_hour_dif):
 
 count = 0
 for day in range(0, 365):
-
     # if count == 0:
     #     count = 1
     #     print('1st')
     #     time.sleep(32400)
     # else:
     #     time.sleep(60)
-    # rec_start_time = '2022-04-18T18:00:01Z'
-    # rec_end_time = '2022-04-18T23:59:59Z'
-    add_rec_start_time = datetime(2022, 5, 1, 00, 00, 1) + timedelta(days=day)
-    add_rec_end_time = datetime(2022, 5, 1, 23, 59, 59) + timedelta(days=day)
+
+    add_rec_start_time = datetime(2022, 5, 8, 00, 00, 1) + timedelta(days=day)
+    add_rec_end_time = datetime(2022, 5, 8, 23, 59, 59) + timedelta(days=day)
     rec_start_time = datetime.strftime(add_rec_start_time, '%Y-%m-%dT%H:%M:%SZ')
     rec_end_time = datetime.strftime(add_rec_end_time, '%Y-%m-%dT%H:%M:%SZ')
     rec_hour_dif = 4
@@ -209,4 +224,3 @@ for day in range(0, 365):
     pause.until(add_rec_end_time + timedelta(days=1))
 
 # use AP scheduler https://coderslegacy.com/python/apscheduler-tutorial-advanced-scheduler/
-
