@@ -140,12 +140,16 @@ class CompareData:
 
     def __init__(self, log_data_frame, epg_lst):
         self.log_lst = log_data_frame.to_dict(orient='records')
-        # self.log_lst = map(lambda x:  dict(x, channel_name='کچاپ') if x.get('null') else dict(x, channel_name=x.get('channel_name')), log_lst)
+        # update service_id of catchup
+        # log_lst = map(
+        #     lambda x: dict(x, service_id='3') if x.get('null') else dict(x, channel_name=x.get('channel_name')),
+        #     log_lst)
         self.epg_lst = epg_lst
 
-    def log_thread(self, sys_id, service_id, action_id, con_type_id, close_session):
+    def log_thread(self, sys_id, service_id, action_id, res_action_id, con_type_id, close_session):
         """
         This def is writen to filter log based on follow:
+        :param res_action_id:
         :param sys_id:
         :param service_id:
         :param action_id:
@@ -154,13 +158,21 @@ class CompareData:
         """
         sorted_log_lst = sorted(self.log_lst, key=lambda d: d['time_stamp'])
         time_stamp_list = list(map(lambda x: x.get('time_stamp'), sorted_log_lst))
-        time_stamp_list.pop(0)
+        # df_test = pd.DataFrame()
+        # df_test['one']=time_stamp_list
+
         time_stamp_list.append(time_stamp_list[-1])
+        time_stamp_list.pop(0)
+
         cr_log_lst = list(map(lambda x: dict(x[0], end_time=x[1]), zip(sorted_log_lst, time_stamp_list)))
+        # df = pd.DataFrame().from_dict(cr_log_lst)
+        # df.to_excel('check2.xlsx')
         cr_log_lst = list(
             map(lambda x: dict(x, end_time=datetime.strptime(x.get('end_time'), '%Y-%m-%dT%H:%M:%SZ')), cr_log_lst))
         cr_log_lst = list(
             map(lambda x: dict(x, time_stamp=datetime.strptime(x.get('time_stamp'), '%Y-%m-%dT%H:%M:%SZ')), cr_log_lst))
+        # df = pd.DataFrame().from_dict(cr_log_lst)
+        # df.to_excel('check3.xlsx')
         # Add end_time of last log
         cr_log_lst[-1].update({'end_time': cr_log_lst[-1].get('time_stamp') + timedelta(minutes=close_session)})
         last_dct = cr_log_lst[-1]
@@ -171,11 +183,17 @@ class CompareData:
         cr_log_lst = list(
             map(lambda x: dict(x, end_time=x.get('time_stamp') + timedelta(minutes=close_session)) if x.get(
                 'diff').seconds > close_session * 60 else dict(x, end_time=x.get('end_time')), cr_log_lst))
-
+        # df = pd.DataFrame().from_dict(cr_log_lst)
+        # df.to_excel('check4.xlsx')
         sys_id_cr_log_lst = list(filter(lambda x: x.get('sys_id') == sys_id, cr_log_lst))
-        act_id_cr_log_lst = list(filter(lambda x: x.get('action_id') == action_id, sys_id_cr_log_lst))
+        act_id_cr_log_lst = list(
+            filter(lambda x: (x.get('action_id') == action_id or x.get('action_id') == res_action_id),
+                   sys_id_cr_log_lst))
         con_type_id_cr_log_lst = list(filter(lambda x: x.get('content_type_id') == con_type_id, act_id_cr_log_lst))
         service_id_cr_log_lst = list(filter(lambda x: x.get('service_id') == service_id, con_type_id_cr_log_lst))
+        # df = pd.DataFrame()
+        # df = pd.DataFrame().from_dict(service_id_cr_log_lst)
+        # df.to_excel('check5.xlsx')
         return service_id_cr_log_lst
 
     def process_log(self, log):
@@ -243,7 +261,7 @@ class CompareData:
             session_data_output = output_logs[output_logs['session_id'] == session]
             call_class = CompareData(session_data_output, customize_epg)
             try:
-                log_act_filter = call_class.log_thread('09', '1', '1', '1', 15)
+                log_act_filter = call_class.log_thread('09', '1', '1', '3', '1', 15)
             except IndexError:
                 continue
             mnr_process_log_output = list(map(lambda x: call_class.process_log(x), log_act_filter))
@@ -284,14 +302,21 @@ class CompareData:
 
             for q in fn_dct:
                 msg = q
+                # tmp_msg = {'salam':'salam'}
                 try:
                     call_send_data.send_to_rabbit(msg, exchange_name, routing_key_name)
 
                 except:
-                    call_send_data = SendData('192.168.143.39', 'admin', 'R@bbitMQ1!')
+                    call_send_data = SendData('10.32.141.52', 'admin', 'R@bbitMQ1!')
                     call_send_data.send_to_rabbit(msg, exchange_name, routing_key_name)
 
         return fn_lst
+
+    # @staticmethod
+    # def split_data(iframe, session_list, output_logs, customize_epg, exchange_name, routing_key_name, final_list=[],
+    #                   fn_lst=[]):
+    #     call_class = CompareData(session_data_output, customize_epg)
+    #     log_act_filter = call_class.log_thread('09', '1', '1', '1', 15)
 
 
 class SendData:
@@ -322,7 +347,7 @@ class SendData:
         self.connection.close()
 
 # # connect to rabbitmq
-# call_send_data = SendData('192.168.143.39', 'admin', 'R@bbitMQ1!')
+# call_send_data = SendData('10.32.141.52', 'admin', 'R@bbitMQ1!')
 #
 # # Registration of specifications of start and end time of logs and elastic search
 # call_extract_data = ExtractData('2022-04-18T23:00:01Z', '2022-04-18T23:59:59Z', 4, 22,
