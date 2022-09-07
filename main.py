@@ -305,8 +305,8 @@ for day in range(0, 365):
     # else:
     #     time.sleep(60)
 
-    add_rec_start_time = datetime(2022, 8, 11, 0, 0, 1) + timedelta(days=day)
-    add_rec_end_time = datetime(2022, 8, 11, 23, 59, 59) + timedelta(days=day)
+    add_rec_start_time = datetime(2022, 9, 5, 0, 0, 1) + timedelta(days=day)
+    add_rec_end_time = datetime(2022, 9, 5, 23, 59, 59) + timedelta(days=day)
     rec_start_time = datetime.strftime(add_rec_start_time, '%Y-%m-%dT%H:%M:%SZ')
     rec_end_time = datetime.strftime(add_rec_end_time, '%Y-%m-%dT%H:%M:%SZ')
     rec_hour_dif = 4
