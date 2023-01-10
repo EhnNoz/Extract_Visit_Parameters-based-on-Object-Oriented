@@ -91,7 +91,7 @@ def get_epg(epg_start_time, epg_end_time, epg_hour_dif):
 
 def extract_action_elastic(data_start_time, data_end_time, log_hour_dif):
     call_extract_data = ExtractData(data_start_time, data_end_time, log_hour_dif, 22,
-                                    "http://norozzadeh:Kibana@110$%^@192.168.143.34:9200", 'live-action', 'time_stamp',
+                                    "https://norozzadeh:SepehR!6$@192.168.143.35:9200", 'live-action', 'time_stamp',
                                     '1m', 10000)
     # extract logs
     data_output = call_extract_data.get_data()
@@ -99,13 +99,15 @@ def extract_action_elastic(data_start_time, data_end_time, log_hour_dif):
     data_output = data_output[
         ['time_stamp', '@version', 'sys_id', 'time_code', '@timestamp', 'service_id', 'session_id',
          'content_name', 'channel_name', 'content_type_id', 'action_id']]
+    # data_output.to_excel('test_data_out.xlsx')
     return data_output
 
 def extract_login_elastic(data_start_time, data_end_time, log_hour_dif):
     call_extract_data = ExtractData(data_start_time, data_end_time, log_hour_dif, 22,
-                                    "http://norozzadeh:Kibana@110$%^@192.168.143.34:9200", 'live-login', 'time_stamp',
+                                    "https://norozzadeh:SepehR!6$@192.168.143.35:9200", 'live-login', 'time_stamp',
                                     '1m', 10000)
     user_output = call_extract_data.get_data()
+    # user_output.to_excel('test_user_out.xlsx')
     return user_output
     # data_output.to_csv('test_data.csv')
 
@@ -305,19 +307,24 @@ for day in range(0, 365):
     # else:
     #     time.sleep(60)
 
-    add_rec_start_time = datetime(2022, 9, 5, 0, 0, 1) + timedelta(days=day)
-    add_rec_end_time = datetime(2022, 9, 5, 23, 59, 59) + timedelta(days=day)
+    add_rec_start_time = datetime(2023, 1, 7, 0, 0, 1) + timedelta(days=day)
+    add_rec_end_time = datetime(2023, 1, 7, 23, 59, 59) + timedelta(days=day)
     rec_start_time = datetime.strftime(add_rec_start_time, '%Y-%m-%dT%H:%M:%SZ')
     rec_end_time = datetime.strftime(add_rec_end_time, '%Y-%m-%dT%H:%M:%SZ')
     rec_hour_dif = 4
     get_epg(rec_start_time, rec_end_time, rec_hour_dif)
     print('2nd')
-    time.sleep(10)
+    time.sleep(1)
     print(datetime.now())
     action_log = extract_action_elastic(rec_start_time, rec_end_time, rec_hour_dif)
     login_log = extract_login_elastic(rec_start_time, rec_end_time, rec_hour_dif)
+    # print('outttttttttt')
+    # time.sleep(20)
     print(datetime.now())
-    calculation_catchup(action_log)
+    try:
+        calculation_catchup(action_log)
+    except KeyError:
+        pass
     print(datetime.now())
     claculation_visit_duration(action_log)
     time.sleep(10)
@@ -325,6 +332,6 @@ for day in range(0, 365):
     print('3rd')
     unique_visit(action_log, login_log)
     print('finish')
-    pause.until(add_rec_end_time + timedelta(days=1))
+    # pause.until(add_rec_end_time + timedelta(days=1))
 
 # use AP scheduler https://coderslegacy.com/python/apscheduler-tutorial-advanced-scheduler/
